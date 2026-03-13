@@ -48,6 +48,33 @@ SKIP_MESSAGES = [
 ]
 SKIP_MESSAGE_URGENT = "已经跳过 {n} 次了！求求你休息一下吧，你的颈椎在向你呼救 🆘"
 
+# ---------------------------------------------------------------------------
+# 跳过休息后，下次提醒时的肉麻关怀语
+# ---------------------------------------------------------------------------
+CARING_MESSAGES = [
+    "亲爱的，上次你跳过了休息，这次一定要好好休息哦～\n你的健康比任何代码都重要 ❤️",
+    "宝贝，你已经连续跳过 {n} 次休息了！\n再不休息我要心疼死了，求求你了好不好 🥺💕",
+    "小可爱，你的眼睛和颈椎都在期待这次休息呢～\n别让它们失望哦，我会一直陪着你的 🌟",
+    "辛苦了宝！每次看你跳过休息我都好担心～\n这次让身体充充电吧，答应我好吗 💗",
+    "你知道吗？你已经跳过 {n} 次休息了……\n世界可以等，但你的身体不能等，休息一下吧亲 😘",
+]
+
+CARING_MESSAGE_DESPERATE = (
+    "你已经跳过 {n} 次休息了！！！\n"
+    "我真的真的好担心你 😭💔\n"
+    "拜托了，就休息这一次，好不好？\n"
+    "我不想看到你累坏自己……"
+)
+
+
+def get_caring_message(n: int) -> str:
+    """根据跳过次数返回肉麻关怀语。"""
+    if n <= 0:
+        return ""
+    if n <= len(CARING_MESSAGES):
+        return CARING_MESSAGES[n - 1].format(n=n)
+    return CARING_MESSAGE_DESPERATE.format(n=n)
+
 
 def get_skip_message(n: int) -> str:
     if n <= 0:
@@ -193,6 +220,13 @@ class BreakReminderApp:
         )
         self.btn_reset.grid(row=0, column=2, padx=6)
 
+        self.btn_skip_rest = tk.Button(
+            frm_buttons, text="⏭ 跳过休息", command=self._on_skip_rest, **btn_style,
+        )
+        # 初始隐藏，仅在休息中显示
+        self.btn_skip_rest.grid(row=0, column=3, padx=6)
+        self.btn_skip_rest.grid_remove()
+
         # -- 统计区域 --
         frm_stats = tk.Frame(self.root, bg=COLORS["bg"])
         frm_stats.pack(padx=16, pady=(2, 4))
@@ -318,6 +352,16 @@ class BreakReminderApp:
             self.btn_pause.config(text="▶ 继续")
             self._update_display()
 
+    def _on_skip_rest(self):
+        """休息中跳过休息 → 计入跳过次数，直接开始工作。"""
+        if self.state != STATE_RESTING:
+            return
+        self._cancel_timer()
+        self.skips_today += 1
+        msg = get_skip_message(self.skips_today)
+        self.msg_var.set(msg)
+        self._start_work()
+
     def _on_reset(self):
         self._cancel_timer()
         self._close_popup()
@@ -326,6 +370,7 @@ class BreakReminderApp:
         self.msg_var.set("")
         self.btn_start.config(state="normal")
         self.btn_pause.config(state="disabled", text="⏸ 暂停")
+        self.btn_skip_rest.grid_remove()
         self._update_display()
 
     # ===============================================================
@@ -337,6 +382,7 @@ class BreakReminderApp:
         self.seconds_left = self._get_work_minutes() * 60
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="normal", text="⏸ 暂停")
+        self.btn_skip_rest.grid_remove()
         self.msg_var.set("")
         self._update_display()
         self.timer_id = self.root.after(1000, self._tick)
@@ -347,6 +393,7 @@ class BreakReminderApp:
         self.seconds_left = self._get_rest_minutes() * 60
         self.btn_start.config(state="disabled")
         self.btn_pause.config(state="normal", text="⏸ 暂停")
+        self.btn_skip_rest.grid()
         self.msg_var.set("")
         self._update_display()
         self.timer_id = self.root.after(1000, self._tick)
@@ -396,6 +443,18 @@ class BreakReminderApp:
             font=("Microsoft YaHei UI", 13),
             justify="center",
         ).pack(padx=30, pady=8)
+
+        # 如果之前跳过过休息，显示肉麻关怀语
+        if self.skips_today > 0:
+            caring_msg = get_caring_message(self.skips_today)
+            tk.Label(
+                popup,
+                text=caring_msg,
+                bg=COLORS["bg"], fg="#ff9eb5",
+                font=("Microsoft YaHei UI", 11),
+                justify="center",
+                wraplength=350,
+            ).pack(padx=30, pady=(0, 8))
 
         frm = tk.Frame(popup, bg=COLORS["bg"])
         frm.pack(pady=(8, 20))
