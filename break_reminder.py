@@ -7,6 +7,7 @@ Python + Tkinter 实现，无需额外依赖。
 
 import tkinter as tk
 from tkinter import font as tkfont
+import os
 import platform
 import sys
 
@@ -28,6 +29,95 @@ def play_alert_sound():
             print("\a", end="", flush=True)
     except Exception:
         print("\a", end="", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Windows 开机自启动支持
+# ---------------------------------------------------------------------------
+
+_AUTOSTART_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_AUTOSTART_VALUE_NAME = "BreakReminder"
+
+
+def _get_startup_command() -> str:
+    """构造当前脚本的自启动命令行（优先使用 pythonw 避免控制台窗口）。"""
+    script_path = os.path.abspath(__file__)
+    # 优先使用 pythonw.exe（无控制台窗口）
+    python_dir = os.path.dirname(sys.executable)
+    pythonw = os.path.join(python_dir, "pythonw.exe")
+    if os.path.isfile(pythonw):
+        interpreter = pythonw
+    else:
+        interpreter = sys.executable
+    return f'"{interpreter}" "{script_path}"'
+
+
+def _is_autostart_enabled() -> bool:
+    """检查注册表 Run Key 中是否存在 BreakReminder 项。"""
+    if platform.system() != "Windows":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY_PATH) as key:
+            winreg.QueryValueEx(key, _AUTOSTART_VALUE_NAME)
+            return True
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _get_autostart_command() -> str | None:
+    """读取注册表中当前保存的自启动命令，不存在则返回 None。"""
+    if platform.system() != "Windows":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY_PATH) as key:
+            value, _ = winreg.QueryValueEx(key, _AUTOSTART_VALUE_NAME)
+            return value
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _enable_autostart() -> None:
+    """在注册表 Run Key 中写入自启动项。"""
+    import winreg
+    cmd = _get_startup_command()
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY_PATH, 0, winreg.KEY_SET_VALUE
+    ) as key:
+        winreg.SetValueEx(key, _AUTOSTART_VALUE_NAME, 0, winreg.REG_SZ, cmd)
+
+
+def _disable_autostart() -> None:
+    """从注册表 Run Key 中删除自启动项。"""
+    import winreg
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, _AUTOSTART_KEY_PATH, 0, winreg.KEY_SET_VALUE
+        ) as key:
+            winreg.DeleteValue(key, _AUTOSTART_VALUE_NAME)
+    except FileNotFoundError:
+        pass  # 本来就不存在，无需处理
+
+
+def _repair_autostart_path() -> bool:
+    """
+    若已启用自启动但注册表中的命令与当前路径不一致，则自动修复。
+    返回 True 表示执行了修复。
+    """
+    if platform.system() != "Windows":
+        return False
+    saved = _get_autostart_command()
+    if saved is None:
+        return False  # 未启用自启动
+    current = _get_startup_command()
+    if saved != current:
+        try:
+            _enable_autostart()  # 重写为当前路径
+            return True
+        except OSError:
+            return False
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +221,16 @@ class BreakReminderApp:
         # ---- 弹窗引用 ----
         self.popup: tk.Toplevel | None = None
 
+        # ---- Windows 自启动 ----
+        self._autostart_var = tk.BooleanVar(value=_is_autostart_enabled())
+
         # ---- 构建界面 ----
         self._build_ui()
         self._update_display()
+
+        # 启动时自动修复自启动路径（目录改名后首次手动启动即可恢复）
+        if platform.system() == "Windows":
+            _repair_autostart_path()
 
     # ===============================================================
     # UI 构建
@@ -188,6 +285,25 @@ class BreakReminderApp:
         )
         self.entry_rest.insert(0, str(self.default_rest_min))
         self.entry_rest.grid(row=0, column=3, padx=4)
+
+        # -- Windows 自启动开关 --
+        if platform.system() == "Windows":
+            frm_autostart = tk.Frame(self.root, bg=COLORS["bg"])
+            frm_autostart.pack(**pad)
+            self.chk_autostart = tk.Checkbutton(
+                frm_autostart,
+                text="🚀 开机自启动",
+                variable=self._autostart_var,
+                command=self._on_autostart_toggle,
+                bg=COLORS["bg"],
+                fg=COLORS["fg"],
+                selectcolor=COLORS["button_bg"],
+                activebackground=COLORS["bg"],
+                activeforeground=COLORS["fg"],
+                font=("Microsoft YaHei UI", 10),
+                cursor="hand2",
+            )
+            self.chk_autostart.pack()
 
         # -- 按钮区域 --
         frm_buttons = tk.Frame(self.root, bg=COLORS["bg"])
@@ -274,6 +390,27 @@ class BreakReminderApp:
             return max(1, v)
         except ValueError:
             return self.default_rest_min
+
+    # ===============================================================
+    # 自启动开关
+    # ===============================================================
+    def _on_autostart_toggle(self):
+        """处理自启动开关切换。"""
+        enable = self._autostart_var.get()
+        try:
+            if enable:
+                _enable_autostart()
+            else:
+                _disable_autostart()
+        except OSError as e:
+            # 写入/删除失败，回退 UI 状态
+            self._autostart_var.set(not enable)
+            from tkinter import messagebox
+            messagebox.showerror(
+                "自启动设置失败",
+                f"无法{'启用' if enable else '禁用'}开机自启动：\n{e}",
+                parent=self.root,
+            )
 
     # ===============================================================
     # 显示更新
